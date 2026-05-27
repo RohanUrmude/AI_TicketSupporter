@@ -7,6 +7,7 @@ It is responsible for input validation and invoking the appropriate service.
 from flask import Blueprint, request, jsonify
 from services.ticket_processing_service import process_support_ticket
 from utils.pii_detector import PIIDetector, PIIMasker
+from utils.translation_service import translate_text
 
 # Create a Blueprint
 ticket_bp = Blueprint('ticket_bp', __name__, url_prefix='/api')
@@ -79,3 +80,52 @@ def handle_process_ticket():
         return jsonify(error), 502 # 502 Bad Gateway indicates an upstream API error
 
     return jsonify(result)
+
+
+@ticket_bp.route('/translate', methods=['POST'])
+def handle_translate():
+    """
+    API endpoint to translate guidance text to Indian languages.
+    Supports: Hindi, Tamil, Telugu, Kannada, Malayalam, Gujarati, Marathi, Bengali, Punjabi
+
+    Request body:
+    {
+        "text": "Text to translate",
+        "target_language": "Hindi"  # Target Indian language
+    }
+
+    Returns:
+        JSON with translated text
+    """
+    try:
+        data = request.get_json()
+
+        if not data or 'text' not in data:
+            return jsonify({
+                "error": "Missing text field",
+                "error_code": "INVALID_REQUEST"
+            }), 400
+
+        text = data.get('text', '')
+        target_language = data.get('target_language', 'English')
+
+        if not text.strip():
+            return jsonify({
+                "error": "Text cannot be empty",
+                "error_code": "EMPTY_TEXT"
+            }), 400
+
+        translated_text = translate_text(text, target_language)
+
+        return jsonify({
+            "original_text": text,
+            "translated_text": translated_text,
+            "target_language": target_language
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "error": "Translation service error",
+            "error_code": "TRANSLATION_ERROR",
+            "message": str(e)
+        }), 500

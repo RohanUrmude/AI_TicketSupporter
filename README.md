@@ -1,98 +1,205 @@
-# AI Support Ticket Router
+# AI Ticket Supporter - Intelligent Support Ticket Routing System
 
-A production-oriented, full-stack application that uses AI to analyze, route, and generate responses for customer support tickets. The system leverages the Hugging Face Inference API for all AI tasks and features a modern React frontend and a modular Flask backend.
+A production-grade AI-powered support ticket analysis and routing system with real-time speech-to-text, multi-language support, and intelligent guidance generation.
 
 ## Features
 
-*   **AI-Powered Analysis**: Automatically detects the ticket's category, urgency, and sentiment.
-*   **Intelligent Routing**: Uses a conditional workflow to assign tickets to the appropriate team (e.g., Priority Support, Technical, Billing).
-*   **Contextual Guidance**: Generates either urgent troubleshooting steps or detailed self-service guidance based on the ticket's urgency.
-*   **Automated Response Generation**: Creates a professional, empathetic customer-facing email preview for agents.
-*   **Modern UI**: A clean, responsive dashboard built with React for a seamless user experience.
-*   **Modular Backend**: A scalable, production-ready Flask backend built with a service-oriented architecture.
+### 🎙️ Speech-to-Text
+- Click microphone button to speak your issue
+- Real-time speech recognition (works in Chrome, Edge, Safari)
+- Text automatically appears in textarea as you speak
+- No API needed - works offline
+
+### 🌐 Multi-Language Support
+- **9 Indian Languages:** Hindi, Tamil, Telugu, Kannada, Malayalam, Gujarati, Marathi, Bengali, Punjabi
+- Dynamic translation of guidance and email responses
+- Single language dropdown controls both sections
+- Real-time translation without page reload
+
+### 🤖 AI-Powered Analysis
+- **BART** (facebook/bart-large-mnli): Zero-shot ticket classification
+- **Mistral-7B**: Dynamic troubleshooting guidance generation
+- **Llama-2**: Customer response email generation
+- **Llama-3.1**: Quality assessment scoring
+
+### 🛠️ Intelligent Guidance
+- Context-aware troubleshooting steps based on exact issue
+- Different guidance for "charged twice" vs "refund" vs "missing charge"
+- Different steps for "app crash" vs "app slow" vs "app error"
+- Tailored recovery steps for different account access problems
+
+### 📊 Comprehensive Analysis
+- Category classification (Billing, Technical, Account Access, Product Question, General)
+- Urgency detection (Urgent, High, Medium, Low)
+- Sentiment analysis (Positive, Neutral, Negative)
+- Issue complexity and severity assessment
+- Automatic routing decision to appropriate team
+
+### 🔒 Security
+- PII detection and masking (emails, phone, SSN, credit cards, etc.)
+- PII warning before processing
+- Secure ticket handling with automatic masking
+- Rate limiting to prevent abuse
+
+### 📧 Email Generation
+- Dynamic customer response emails adapted to ticket context
+- Sentiment-aware greetings
+- Urgency-based response time commitments
+- Automatic team routing information
 
 ## Tech Stack
 
-| Area    | Technology                               |
-| :------ | :--------------------------------------- |
-| **Frontend** | React (with Vite), JavaScript, CSS       |
-| **Backend**  | Python, Flask                            |
-| **AI Services** | Hugging Face Inference API (via OpenAI-compatible client) |
+**Frontend:**
+- React 18 with Vite
+- CSS3 with dark/light theme support
+- Web Speech API for speech recognition
+- MyMemory API for translations
 
-## Project Structure
+**Backend:**
+- Flask (Python)
+- PostgreSQL database
+- Hugging Face Inference API
+- Multi-model LLM orchestration
 
-The project is organized into two main directories for clear separation of concerns:
+## Quick Start
 
-```
-Gemini_TicketSupporter/
-├── backend/      # Contains the Flask API and all related logic
-└── frontend/     # Contains the React user interface
-```
+### Prerequisites
+- Python 3.8+
+- Node.js 16+
+- PostgreSQL running locally
+- HuggingFace API token (free at huggingface.co)
 
-## Prerequisites
+### Setup
 
-Before you begin, ensure you have the following installed:
-*   **Node.js** (v18 or later) and **npm**
-*   **Python** (v3.9 or later) and **pip**
-*   A **Hugging Face User Access Token** with `read` permissions. You can get one here.
-
-## Setup and Installation
-
-Follow these steps to set up the project locally.
-
-### 1. Backend Setup
-
-First, set up and run the Flask server.
-
+1. **Backend Setup**
 ```bash
-# 1. Navigate to the backend directory
 cd backend
-
-# 2. Create and activate a Python virtual environment
-# On Windows (PowerShell):
 python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# On macOS/Linux:
-# python3 -m venv venv
-# source venv/bin/activate
-
-# 3. Install the required Python packages
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-
-# 4. Create the environment file
-# Create a file named .env in the 'backend' directory and add your Hugging Face token:
-HF_API_TOKEN="hf_YourHuggingFaceApiTokenHere"
-
-> **⚠️ Security Warning:** Never commit your actual Hugging Face token or any other secrets to version control (like Git). The `.env` file is used to keep secrets private on your local machine and should be listed in your `.gitignore` file to prevent accidental exposure. The value above is a placeholder.
 ```
 
-### 2. Frontend Setup
+2. **Configure Environment**
+Create `.env` file in `backend/`:
+```
+HF_API_TOKEN=your_token_here
+DATABASE_URL=postgresql://postgres:password@localhost:5432/ai_ticket_support
+FLASK_ENV=development
+```
 
-In a new terminal, set up the React client.
-
+3. **Frontend Setup**
 ```bash
-# 1. Navigate to the frontend directory
 cd frontend
-
-# 2. Install the required Node.js packages
 npm install
 ```
 
-## Running the Application
+### Run
 
-You need to run both the backend and frontend servers concurrently in two separate terminals.
+**Backend:**
+```bash
+cd backend
+FLASK_APP=app.py python -m flask run --port 5001
+```
 
-*   **Terminal 1: Start the Backend**
-    ```bash
-    # (Inside the backend/ directory with venv active)
-    python app.py
-    ```
-    The backend will be running at `http://127.0.0.1:5001`.
+**Frontend:**
+```bash
+cd frontend
+npm run dev
+```
 
-*   **Terminal 2: Start the Frontend**
-    ```bash
-    # (Inside the frontend/ directory)
-    npm run dev
-    ```
-    The application will automatically open in your browser at `http://localhost:5173`.
+Visit `http://localhost:5173`
+
+## Usage
+
+1. **Submit Ticket:**
+   - Type or use 🎙️ microphone to describe issue
+   - System detects PII and warns you
+   - Click "Analyze & Route"
+
+2. **View Results:**
+   - Modal shows comprehensive analysis
+   - 🔀 Routing decision and assigned team
+   - 🛠️ Dynamic troubleshooting steps
+   - 📧 Customer response email
+   - ⭐ Quality scores
+
+3. **Change Language:**
+   - Click language dropdown
+   - Select any Indian language
+   - Guidance AND email translate together
+   - Switch anytime without reloading
+
+## File Structure
+
+```
+AI_TicketSupporter/
+├── backend/
+│   ├── app.py                 # Flask application
+│   ├── config.py              # Configuration
+│   ├── requirements.txt        # Python dependencies
+│   ├── routes/
+│   │   └── ticket_routes.py    # API endpoints
+│   ├── services/
+│   │   └── ticket_processing_service.py
+│   ├── utils/
+│   │   ├── multi_model_client.py      # LLM orchestration
+│   │   ├── pii_detector.py             # Security
+│   │   ├── translation_service.py      # Translation
+│   │   └── ...
+│   └── prompts/
+│       └── prompt_templates.py
+└── frontend/
+    ├── src/
+    │   ├── App.jsx            # Main component
+    │   ├── App.css            # Styling
+    │   ├── ResultsModal.jsx    # Results display
+    │   └── ...
+    ├── package.json
+    └── vite.config.js
+```
+
+## API Endpoints
+
+- `POST /api/ticket` - Submit and analyze ticket
+- `POST /api/translate` - Translate text to Indian languages
+
+## Performance
+
+- **Average Processing:** 3-8 seconds
+- **Models Used:** 4 specialized LLMs
+- **Concurrency:** Rate limited (100 req/min global, 10 req/min per ticket)
+- **Caching:** 24-hour cache for duplicate tickets
+
+## Models
+
+| Model | Purpose | Size |
+|-------|---------|------|
+| BART | Classification | Large |
+| Mistral-7B | Guidance Generation | 7B params |
+| Llama-2 | Email Generation | 7B params |
+| Llama-3.1 | Quality Assessment | 8B params |
+
+## Language Support
+
+- English (original)
+- हिंदी (Hindi)
+- தமிழ் (Tamil)
+- తెలుగు (Telugu)
+- ಕನ್ನಡ (Kannada)
+- മലയാളം (Malayalam)
+- ગુજરાતી (Gujarati)
+- मराठी (Marathi)
+- বাংলা (Bengali)
+- ਪੰਜਾਬੀ (Punjabi)
+
+## Browser Support
+
+- Chrome/Chromium (Best)
+- Edge
+- Safari
+- Opera
+- Firefox (Limited speech-to-text)
+
+## License
+
+MIT

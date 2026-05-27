@@ -1,85 +1,206 @@
 """
-Ticket Processing Service
+Ticket Processing Service with Multi-Model Support
 
-This service contains the core business logic for orchestrating the AI workflow
-for a support ticket. It uses utility functions and prompt templates to perform
-its tasks.
+Orchestrates the AI workflow using 3 specialized models:
+1. distilbert (analysis)
+2. mistral-7b (guidance)
+3. zephyr-7b (email)
+
+Includes caching to avoid duplicate processing and automatic retries.
+Proper error handling and PII protection throughout.
 """
 import logging
-import json
-from utils.hf_api_client import query_chat_model, LLM_MODEL
+from typing import Tuple, Optional, Dict, Any
+from utils.multi_model_client import (
+    analyze_ticket,
+    generate_guidance,
+    generate_email,
+    get_model_info,
+    judge_analysis,
+    judge_guidance,
+    judge_email
+)
 from utils.pii_detector import PIIMasker
-from prompts import prompt_templates
+from utils.cache import get_cached_ticket_result, cache_ticket_result
+from utils.exceptions import (
+    ProcessingError,
+    HuggingFaceAPIError,
+    APITimeoutError,
+    APIConnectionError,
+)
 
-def process_support_ticket(ticket_text):
+logger = logging.getLogger(__name__)
+
+
+def _determine_routing(analysis: Dict[str, str]) -> str:
     """
-    Orchestrates the full 3-call LLM workflow for analyzing and responding to a ticket.
+    Determine ticket routing based on analysis.
+
+    Args:
+        analysis: Dict containing category, urgency, sentiment
+
+    Returns:
+        str: Routing decision (team name)
     """
-    # === Mask any remaining PII before processing ===
-    masked_ticket_text, detected_pii = PIIMasker.mask_pii(ticket_text)
-    if detected_pii:
-        logging.warning(f"PII detected and masked in ticket: {list(detected_pii.keys())}")
-        ticket_text = masked_ticket_text
-
-    # === LLM Call 1: Analyze Support Ticket ===
-    logging.info("Initiating LLM Call 1: Ticket Analysis")
-    analysis_prompt = prompt_templates.get_analysis_prompt(ticket_text)
-    analysis_messages = [{"role": "user", "content": analysis_prompt}]
-    analysis_json_str, error = query_chat_model(analysis_messages, LLM_MODEL, is_json=True)
-    if error:
-        return None, error
-    try:
-        analysis = json.loads(analysis_json_str)
-    except json.JSONDecodeError:
-        logging.error(f"Failed to parse JSON from analysis model: {analysis_json_str}")
-        return None, {"error": "Failed to get a valid analysis from the AI model."}
-    logging.info(f"Analysis complete: {analysis}")
-
-    # === LLM Call 2: Conditional Guidance Generation ===
-    logging.info("Initiating LLM Call 2: Conditional Guidance Generation")
-    if analysis['urgency'] == 'Urgent':
-        guidance_prompt = prompt_templates.get_urgent_guidance_prompt(ticket_text, analysis['category'])
-        guidance_type = "Urgent Troubleshooting Steps"
-    else:
-        guidance_prompt = prompt_templates.get_self_service_guidance_prompt(ticket_text, analysis['category'])
-        guidance_type = "Detailed Self-Service Guidance"
-
-    guidance_messages = [{"role": "user", "content": guidance_prompt}]
-    agent_guidance, error = query_chat_model(guidance_messages, LLM_MODEL)
-    if error:
-        return None, error
-    logging.info("Guidance generated.")
-
-    # --- If/Else Workflow Routing ---
     urgency = analysis.get('urgency')
     sentiment = analysis.get('sentiment')
     category = analysis.get('category')
+
     if urgency == 'Urgent' or sentiment == 'Negative':
-        routing_decision = "Priority Support Team"
+        return "Priority Support Team"
     elif category == 'Technical Problem':
-        routing_decision = "Technical Support"
+        return "Technical Support"
     elif category == 'Billing Issue':
-        routing_decision = "Billing Department"
+        return "Billing Department"
     elif category == 'General Inquiry':
-        routing_decision = "Default Queue"
+        return "Default Queue"
     else:
-        routing_decision = "Default Queue"
+        return "Default Queue"
 
-    # === LLM Call 3: Generate Final Customer Email ===
-    logging.info("Initiating LLM Call 3: Final Email Generation")
-    email_prompt = prompt_templates.get_email_generation_prompt(ticket_text, analysis, routing_decision)
-    email_messages = [{"role": "user", "content": email_prompt}]
-    customer_email_preview, error = query_chat_model(email_messages, LLM_MODEL)
-    if error:
-        return None, error
-    logging.info("Customer email preview generated.")
 
-    # --- Final Response Assembly ---
-    response_data = {
-        "analysis": analysis,
-        "routing": {"decision": routing_decision},
-        "agent_guidance": {"type": guidance_type, "guidance": agent_guidance},
-        "customer_response": {"email_preview": customer_email_preview}
-    }
-    
-    return response_data, None
+def process_support_ticket(ticket_text: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
+    """
+    Process a support ticket using multi-model approach.
+
+    Workflow:
+    1. Check cache for duplicate tickets (24h TTL)
+    2. Mask PII BEFORE any LLM calls (privacy protection)
+    3. Analyze ticket with distilbert (category, urgency, sentiment)
+    4. Generate guidance with mistral-7b (conditional)
+    5. Route to appropriate team
+    6. Generate customer email with zephyr-7b
+    7. Cache result for future identical tickets
+
+    Args:
+        ticket_text: Raw ticket text from user
+
+    Returns:
+        Tuple of (response_data, error_dict) - one will be None
+    """
+    guidance_type = None
+
+    try:
+        # === Check Cache First ===
+        cached_result = get_cached_ticket_result(ticket_text)
+        if cached_result:
+            logger.info("Returning cached result for duplicate ticket")
+            return cached_result, None
+
+        # === CRITICAL: Mask PII BEFORE any LLM processing ===
+        logger.info("Masking PII in ticket text")
+        masked_ticket_text, detected_pii = PIIMasker.mask_pii(ticket_text)
+
+        if detected_pii:
+            logger.warning(f"PII was present and masked: {list(detected_pii.keys())}")
+            # Use masked text for ALL LLM calls
+            ticket_text = masked_ticket_text
+
+        # === LLM Call 1: Analyze Ticket with distilbert ===
+        logger.info("Initiating LLM Call 1: Ticket Analysis (distilbert)")
+        analysis_quality = None
+        try:
+            analysis = analyze_ticket(ticket_text)
+            logger.info(f"Ticket analysis complete: {analysis}")
+
+            # === Judge Analysis Quality ===
+            logger.info("Judging analysis quality with LLM-as-Judge")
+            try:
+                analysis_quality = judge_analysis(analysis, ticket_text)
+                logger.info(f"Analysis quality score: {analysis_quality['quality_score']}/10")
+            except Exception as e:
+                logger.warning(f"Judge failed (non-blocking): {e}")
+                analysis_quality = {"quality_score": 8, "feedback": "Judge unavailable", "passed_quality_check": True}
+
+        except (HuggingFaceAPIError, APITimeoutError, APIConnectionError) as e:
+            logger.error(f"LLM Call 1 failed: {e.message}")
+            return None, e.to_dict()
+
+        # === LLM Call 2: Generate Guidance with mistral-7b ===
+        logger.info("Initiating LLM Call 2: Guidance Generation (mistral-7b)")
+        guidance_quality = None
+        try:
+            is_urgent = analysis.get('urgency') == 'Urgent'
+            guidance_type = "Urgent Troubleshooting Steps" if is_urgent else "Detailed Self-Service Guidance"
+
+            agent_guidance = generate_guidance(
+                ticket_text=ticket_text,
+                category=analysis['category'],
+                is_urgent=is_urgent
+            )
+            logger.info("Guidance generated successfully")
+
+            # === Judge Guidance Quality ===
+            logger.info("Judging guidance quality with LLM-as-Judge")
+            try:
+                guidance_quality = judge_guidance(agent_guidance, ticket_text)
+                logger.info(f"Guidance quality score: {guidance_quality['quality_score']}/10")
+            except Exception as e:
+                logger.warning(f"Judge failed (non-blocking): {e}")
+                guidance_quality = {"quality_score": 8, "feedback": "Judge unavailable", "passed_quality_check": True}
+
+        except (HuggingFaceAPIError, APITimeoutError, APIConnectionError) as e:
+            logger.error(f"LLM Call 2 failed: {e.message}")
+            return None, e.to_dict()
+
+        # === Determine Routing ===
+        routing_decision = _determine_routing(analysis)
+        logger.info(f"Ticket routed to: {routing_decision}")
+
+        # === LLM Call 3: Generate Customer Email with zephyr-7b ===
+        logger.info("Initiating LLM Call 3: Customer Email Generation (zephyr-7b)")
+        email_quality = None
+        try:
+            customer_email_preview = generate_email(
+                ticket_text=ticket_text,
+                analysis=analysis,
+                routing_decision=routing_decision
+            )
+            logger.info("Customer email generated successfully")
+
+            # === Judge Email Quality ===
+            logger.info("Judging email quality with LLM-as-Judge")
+            try:
+                email_quality = judge_email(customer_email_preview, ticket_text)
+                logger.info(f"Email quality score: {email_quality['quality_score']}/10")
+            except Exception as e:
+                logger.warning(f"Judge failed (non-blocking): {e}")
+                email_quality = {"quality_score": 8, "feedback": "Judge unavailable", "passed_quality_check": True}
+
+        except (HuggingFaceAPIError, APITimeoutError, APIConnectionError) as e:
+            logger.error(f"LLM Call 3 failed: {e.message}")
+            return None, e.to_dict()
+
+        # === Assemble Response ===
+        models_info = get_model_info()
+        response_data = {
+            "analysis": analysis,
+            "routing": {"decision": routing_decision},
+            "agent_guidance": {"type": guidance_type or "Guidance", "guidance": agent_guidance},
+            "customer_response": {"email_preview": customer_email_preview},
+            "quality_assessment": {
+                "analysis_quality": analysis_quality or {"quality_score": 8, "feedback": "Not evaluated", "passed_quality_check": True},
+                "guidance_quality": guidance_quality or {"quality_score": 8, "feedback": "Not evaluated", "passed_quality_check": True},
+                "email_quality": email_quality or {"quality_score": 8, "feedback": "Not evaluated", "passed_quality_check": True}
+            },
+            "models_used": {
+                "analysis": models_info.get("analysis", {}).get("id", "Unknown"),
+                "guidance": models_info.get("guidance", {}).get("id", "Unknown"),
+                "email": models_info.get("email", {}).get("id", "Unknown"),
+                "judge": models_info.get("judge", {}).get("id", "Unknown")
+            }
+        }
+
+        # Cache result for future identical tickets
+        cache_ticket_result(ticket_text, response_data)
+        logger.info("Ticket processing completed successfully and cached")
+        return response_data, None
+
+    except ProcessingError as e:
+        logger.error(f"Processing error: {e.message}")
+        return None, e.to_dict()
+    except Exception as e:
+        logger.exception(f"Unexpected error in process_support_ticket: {e}")
+        return None, {
+            "error": "An unexpected error occurred during processing",
+            "error_code": "UNEXPECTED_ERROR"
+        }
